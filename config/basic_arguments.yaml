@@ -1,0 +1,51 @@
+train:
+  data_name: 'CT'
+  mod: "DiT-XL/2"
+  in_ch: 1
+  image_dir: "/cluster/home/austinen/NTNU/DATA/EDA/IMAGE_SLICES/"
+  label_dir: "/cluster/home/austinen/NTNU/DATA/EDA/LABEL_SLICES/"
+  out_dir: "./cluster/home/austinen/NTNU/MSD_output/"
+  schedule_sampler: "uniform"
+  lr: 1e-4
+  weight_decay: 0.0
+  lr_anneal_steps: 0
+  batch_size: 4
+  microbatch: -1         # -1 disables microbatches
+  ema_rate: "0.9999"     # comma-separated list of EMA values
+  log_interval: 100
+  save_interval: 5000
+  resume_checkpoint: None # "/results/pretrainedmodel.pt"
+  use_fp16: False
+  fp16_scale_growth: 1e-3
+  gpu_dev: "0"
+  multi_gpu: None         # "0,1,2"
+  global_seed: 0
+model:
+  image_size: 512
+  num_channels: 128
+  num_res_blocks: 2
+  num_heads: 4
+  in_ch: 5
+  num_heads_upsample: -1
+  num_head_channels: -1
+  attention_resolutions: "16"
+  channel_mult: ""
+  dropout: 0.0
+  class_cond: False
+  use_checkpoint: False
+  use_scale_shift_norm: False
+  resblock_updown: False
+  use_fp16: False
+  use_new_attention_order: False
+  dpm_solver: False
+  version: 'new'
+  mod: 'unet'
+diffusion:
+  learn_sigma: True
+  diffusion_steps: 1000
+  noise_schedule: "linear"
+  timestep_respacing: ""
+  use_kl: False
+  predict_xstart: False
+  rescale_timesteps: False
+  rescale_learned_sigmas: False

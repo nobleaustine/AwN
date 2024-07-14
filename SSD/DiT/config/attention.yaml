@@ -1,0 +1,56 @@
+Attention(Module):
+  constructor_arguments:
+    p_or_not: false
+    norm_layer: 
+    proj_drop: 0.0
+    attn_drop: 0.0
+    qk_norm: false
+    qkv_bias: false
+    num_heads: 8
+    dim: null
+  class_attributes:
+  - num_heads
+  - head_dim
+  - scale
+  - fused_attn
+  - p_or_not
+  - qkv
+  - q_norm
+  - k_norm
+  - attn_drop
+  - proj
+  - proj_drop
+  class_methods:
+    forward:
+      arguments:
+        x: null
+      returns:
+      - x
+CrossAttention(Module):
+  constructor_arguments:
+    norm_layer: 
+    proj_drop: 0.0
+    attn_drop: 0.0
+    qk_norm: false
+    qkv_bias: false
+    num_heads: 8
+    dim: null
+  class_attributes:
+  - num_heads
+  - head_dim
+  - scale
+  - fused_attn
+  - kv
+  - q
+  - q_norm
+  - k_norm
+  - attn_drop
+  - proj
+  - proj_drop
+  class_methods:
+    forward:
+      arguments:
+        y: null
+        x: null
+      returns:
+      - x

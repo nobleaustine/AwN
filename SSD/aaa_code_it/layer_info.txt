@@ -1,0 +1,4 @@
+  Conv2d | Input Size: torch.Size([1, 1, 28, 28]) | Output Size: torch.Size([1, 32, 26, 26])
+  Conv2d | Input Size: torch.Size([1, 32, 26, 26]) | Output Size: torch.Size([1, 64, 24, 24])
+  Linear | Input Size: torch.Size([1, 36864]) | Output Size: torch.Size([1, 128])
+  Linear | Input Size: torch.Size([1, 128]) | Output Size: torch.Size([1, 10])
