@@ -1,10 +1,9 @@
 train:
   data_name: 'CT'
   mod: "DiT-XL/2"
-  in_ch: 1
   image_dir: "/cluster/home/austinen/NTNU/DATA/EDA/IMAGE_SLICES/"
   label_dir: "/cluster/home/austinen/NTNU/DATA/EDA/LABEL_SLICES/"
-  out_dir: "./cluster/home/austinen/NTNU/MSD_output/"
+  results_dir: "./cluster/home/austinen/NTNU/MSD_output/"
   schedule_sampler: "uniform"
   lr: 1e-4
   weight_decay: 0.0
@@ -20,12 +19,13 @@ train:
   gpu_dev: "0"
   multi_gpu: None         # "0,1,2"
   global_seed: 0
+  num_workers: 4
 model:
   image_size: 512
   num_channels: 128
   num_res_blocks: 2
   num_heads: 4
-  in_ch: 5
+  in_ch: 1
   num_heads_upsample: -1
   num_head_channels: -1
   attention_resolutions: "16"
@@ -39,7 +39,7 @@ model:
   use_new_attention_order: False
   dpm_solver: False
   version: 'new'
-  mod: 'unet'
+  mod: "DiT-S/2" #'unet/1'
 diffusion:
   learn_sigma: True
   diffusion_steps: 1000

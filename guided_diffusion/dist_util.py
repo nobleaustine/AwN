@@ -5,54 +5,32 @@ Helpers for distributed training.
 import io
 import os
 import socket
-
 import blobfile as bf
-#from mpi4py import MPI
 import torch as th
 import torch.distributed as dist
 
-# Change this to reflect your cluster layout.
-# The GPU for a given rank is (rank % GPUS_PER_NODE).
-GPUS_PER_NODE = 8
 
-SETUP_RETRY_COUNT = 3
+def setup_dist_system(args):
 
+    assert th.cuda.is_available(), "Training currently requires at least one GPU."
 
-def setup_dist(args):
-    """
-    Setup a distributed process group.
-    """
-    if dist.is_initialized():
-        return
-    if not args.multi_gpu:
-        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_dev
-
-    backend = "gloo" if not th.cuda.is_available() else "nccl"
-
-    if backend == "gloo":
-        hostname = "localhost"
-    else:
-        hostname = socket.gethostbyname(socket.getfqdn())
-    os.environ["MASTER_ADDR"] = '127.0.1.1'#comm.bcast(hostname, root=0)
-    os.environ["RANK"] = '0'#str(comm.rank)
-    os.environ["WORLD_SIZE"] = '1'#str(comm.size)
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("", 0))
-    s.listen(1)
-    port = s.getsockname()[1]
-    s.close()
-    os.environ["MASTER_PORT"] = str(port)
-    dist.init_process_group(backend=backend, init_method="env://")
+    dist.init_process_group(backend="nccl")
+    assert args.batch_size % dist.get_world_size()==0,"Batch size should be divisible by the number of GPUs."
+    rank = dist.get_rank()
+    device = rank % th.cuda.device_count()
+    seed = args.global_seed * dist.get_world_size() + rank
+    th.manual_seed(seed)
+    th.cuda.set_device(device) # int(os.environ["LOCAL_RANK"])
+    print(f"Starting rank={rank}, device={device}, seed={seed}.")
 
 
-def dev():
-    """
-    Get the device to use for torch.distributed.
-    """
-    if th.cuda.is_available():
-        return th.device(f"cuda")
-    return th.device("cpu")
+# def dev():
+#     """
+#     Get the device to use for torch.distributed.
+#     """
+#     if th.cuda.is_available():
+#         return th.device(f"cuda")
+#     return th.device("cpu")
 
 
 def load_state_dict(path, **kwargs):
@@ -75,7 +53,7 @@ def sync_params(params):
     """
     for p in params:
         with th.no_grad():
-            dist.broadcast(p, 0)
+            dist.broadcast(p.data,src= 0)
 
 
 def _find_free_port():

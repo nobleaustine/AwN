@@ -7,22 +7,12 @@ import torch as th
 import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
+from .auxillary import load_state_dict
 
 from . import dist_util, logger
 from .fp16_util import MixedPrecisionTrainer
-from .nn import update_ema
+from .nns import update_ema
 from .resample import LossAwareSampler, UniformSampler
-# from visdom import Visdom
-# viz = Visdom(port=8850)
-# loss_window = viz.line( Y=th.zeros((1)).cpu(), X=th.zeros((1)).cpu(), opts=dict(xlabel='epoch', ylabel='Loss', title='loss'))
-# grad_window = viz.line(Y=th.zeros((1)).cpu(), X=th.zeros((1)).cpu(),
-#                            opts=dict(xlabel='step', ylabel='amplitude', title='gradient'))
-
-
-# For ImageNet experiments, this was a good default value.
-# We found that the lg_loss_scale quickly climbed to
-# 20-21 within the first ~1K steps of training.
-INITIAL_LOG_LOSS_SCALE = 20.0
 
 def visualize(img):
     _min = img.min()
@@ -34,8 +24,9 @@ class TrainLoop:
     def __init__(
         self,
         *,
+        rank,
+        device,
         model,
-        classifier,
         diffusion,
         data,
         dataloader,
@@ -52,14 +43,15 @@ class TrainLoop:
         weight_decay=0.0,
         lr_anneal_steps=0,
     ):
+        self.rank = rank
+        self.device = device
         self.model = model
         self.dataloader=dataloader
-        self.classifier = classifier
         self.diffusion = diffusion
         self.data = data
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
-        self.lr = lr
+        self.lr = float(lr)
         self.ema_rate = (
             [ema_rate]
             if isinstance(ema_rate, float)
@@ -80,7 +72,7 @@ class TrainLoop:
 
         self.sync_cuda = th.cuda.is_available()
 
-        self._load_and_sync_parameters()
+        # self._load_and_sync_parameters()
         self.mp_trainer = MixedPrecisionTrainer(
             model=self.model,
             use_fp16=self.use_fp16,
@@ -102,37 +94,42 @@ class TrainLoop:
                 copy.deepcopy(self.mp_trainer.master_params)
                 for _ in range(len(self.ema_rate))
             ]
-
-        if th.cuda.is_available():
-            self.use_ddp = True
-            self.ddp_model = DDP(
-                self.model,
-                device_ids=[dist_util.dev()],
-                output_device=dist_util.dev(),
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
-        else:
-            if dist.get_world_size() > 1:
-                logger.warn(
-                    "Distributed training requires CUDA. "
-                    "Gradients will not be synchronized properly!"
-                )
-            self.use_ddp = False
-            self.ddp_model = self.model
+        self.ddp_model = DDP(
+                self.model.to(self.device),
+                device_ids=[self.rank],
+        )
+        # if th.cuda.is_available():
+        #     self.use_ddp = True
+        #     self.ddp_model = DDP(
+        #         self.model.to(self.device),
+        #         device_ids=[self.rank],
+        #         # output_device=self.gpu_id,
+        #         # broadcast_buffers=False,
+        #         # bucket_cap_mb=128,
+        #         # find_unused_parameters=False,
+        #     )
+        # else:
+        #     if dist.get_world_size() > 1:
+        #         logger.warn(
+        #             "Distributed training requires CUDA. "
+        #             "Gradients will not be synchronized properly!"
+        #         )
+        #     self.use_ddp = False
+        #     self.ddp_model = self.model
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
-
-        if resume_checkpoint:
+        print("hello: ",resume_checkpoint)
+        if resume_checkpoint is not None:
+            print(resume_checkpoint)
             print('resume model')
+            loc = f"cuda:{self.gpu_id}"
             self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
             if dist.get_rank() == 0:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
                 self.model.load_part_state_dict(
                     dist_util.load_state_dict(
-                        resume_checkpoint, map_location=dist_util.dev()
+                        resume_checkpoint, map_location=loc
                     )
                 )
 
@@ -146,8 +143,8 @@ class TrainLoop:
         if ema_checkpoint:
             if dist.get_rank() == 0:
                 logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
-                state_dict = dist_util.load_state_dict(
-                    ema_checkpoint, map_location=dist_util.dev()
+                state_dict = load_state_dict(
+                    ema_checkpoint, map_location=f"cuda:{self.device}"
                 )
                 ema_params = self.mp_trainer.state_dict_to_master_params(state_dict)
 
@@ -162,7 +159,7 @@ class TrainLoop:
         if bf.exists(opt_checkpoint):
             logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
             state_dict = dist_util.load_state_dict(
-                opt_checkpoint, map_location=dist_util.dev()
+                opt_checkpoint, map_location=f"cuda:{self.device}"
             )
             self.opt.load_state_dict(state_dict)
 
@@ -216,19 +213,18 @@ class TrainLoop:
 
         self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i : i + self.microbatch].to(dist_util.dev())
+            micro = batch[i : i + self.microbatch].to(f"cuda:{self.device}")
             micro_cond = {
-                k: v[i : i + self.microbatch].to(dist_util.dev())
+                k: v[i : i + self.microbatch].to(f"cuda:{self.device}")
                 for k, v in cond.items()
             }
 
             last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+            t, weights = self.schedule_sampler.sample(micro.shape[0], f"cuda:{self.device}")
 
             compute_losses = functools.partial(
                 self.diffusion.training_losses_segmentation,
                 self.ddp_model,
-                self.classifier,
                 micro,
                 t,
                 model_kwargs=micro_cond,

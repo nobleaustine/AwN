@@ -159,9 +159,11 @@ def create_model(
     use_fp16=False,
     use_new_attention_order=False,
     version = 'new',
-    mod = 'unet',
+    mod = 'unet/1',
 ):
-    if mod == 'unet':
+    if mod == 'unet/1':
+        print("Using UNetModel_v1preview")
+
         if channel_mult == "":
             if image_size == 512:
                 channel_mult = (1, 1, 2, 2, 4, 4)

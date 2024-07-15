@@ -16,7 +16,7 @@ import numpy as np
 import torch as th
 import torch.nn as nn
 from .train_util import visualize
-from .nn import mean_flat
+from .nns import mean_flat
 from .losses import normal_kl, discretized_gaussian_log_likelihood
 from scipy import ndimage
 from torchvision import transforms

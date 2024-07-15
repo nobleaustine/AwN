@@ -1,10 +1,15 @@
 import yaml
+import os
+from glob import glob
 import sys
 import argparse
+from omegaconf import DictConfig,OmegaConf
+import hydra
 sys.path.append("../")
 sys.path.append("./")
-from guided_diffusion import dist_util, logger
+# from guided_diffusion import dist_util, logger
 from guided_diffusion.resample import create_named_schedule_sampler
+from guided_diffusion.auxillary import create_logger,setup_dist_system
 
 from guided_diffusion.CT_Dataset import NTNUDataset
 from guided_diffusion.script_util import (
@@ -18,47 +23,71 @@ from guided_diffusion.train_util import TrainLoop
 # from visdom import Visdom
 # viz = Visdom(port=8850)
 import torchvision.transforms as transforms
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from helper_functions.ct_dataloader import CTDataset
+from torchvision import transforms
+
 
 def main():
-    args = create_argparser().parse_args()
 
-    dist_util.setup_dist(args)
-    logger.configure(dir = args.out_dir)
+    args = create_argparser()
+    rank,device = setup_dist_system(args.batch_size, args.global_seed)
 
-    logger.log("creating data loader...")
+    if dist.get_rank() == 0:
+        os.makedirs(args.results_dir, exist_ok=True) 
+        experiment_index = len(glob(f"{args.results_dir}/*"))
+        model_string_name = args.mod.replace("/", "-") 
+        experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}" 
+        checkpoint_dir = f"{experiment_dir}/checkpoints"  
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        logger = create_logger(experiment_dir)
+        logger.info(f"Experiment directory created at {experiment_dir}")
+    else:
+        logger = create_logger(None)
 
-
+    logger.info("setting up dataloader and dataset...")
     transform = transforms.Compose([transforms.Lambda(lambda x: x.to(th.float32))])
-    ds = NTNUDataset(args.image_dir, args.label_dir, transform)
-    args.in_ch = 1
+    dataset = NTNUDataset(args.image_dir, args.label_dir, transform)
+    process_count = dist.get_world_size()
 
-    datal= th.utils.data.DataLoader(
-        ds,
-        batch_size=args.batch_size,
-        shuffle=True)
-    data = iter(datal)
+    sampler = DistributedSampler(
+        dataset,
+        num_replicas=process_count,
+        rank=rank,
+        shuffle=True,
+        seed=args.global_seed
+    )
+    loader = DataLoader(
+        dataset,
+        batch_size=int(args.batch_size //process_count),
+        shuffle=False,
+        sampler=sampler,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=True
+    )
+    logger.info(f"Dataset contains {len(dataset):,} images ({args.image_dir})")
+    data = iter(loader)
 
-    logger.log("creating model and diffusion...")
-
+    logger.info("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(
         **args_to_dict(args, model_and_diffusion_defaults().keys())
     )
-    if args.multi_gpu:
-        model = th.nn.DataParallel(model,device_ids=[int(id) for id in args.multi_gpu.split(',')])
-        model.to(device = th.device('cuda', int(args.gpu_dev)))
-    else:
-        model.to(dist_util.dev())
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion,  maxt=args.diffusion_steps)
 
 
-    logger.log("training...")
+    logger.info("begin training...")
     TrainLoop(
+        rank=rank,
+        device=device,
         model=model,
         diffusion=diffusion,
-        classifier=None,
         data=data,
-        dataloader=datal,
-        batch_size=args.batch_size,
+        dataloader=loader,
+        batch_size=int(args.batch_size //process_count),
         microbatch=args.microbatch,
         lr=args.lr,
         ema_rate=args.ema_rate,

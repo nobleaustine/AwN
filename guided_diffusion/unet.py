@@ -16,7 +16,7 @@ from .utils import to_cuda, maybe_to_torch
 from scipy.ndimage.filters import gaussian_filter
 from typing import Union, Tuple, List
 from torch.cuda.amp import autocast
-from .nn import (
+from .nns import (
     checkpoint,
     conv_nd,
     linear,
