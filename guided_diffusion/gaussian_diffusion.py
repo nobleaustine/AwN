@@ -14,14 +14,14 @@ import os
 # viz = Visdom(port=8850)
 import numpy as np
 import torch as th
-import torch.nn as nn
-from .train_util import visualize
+# import torch.nn as nn
+# from .train_util import visualize
 from .nns import mean_flat
 from .losses import normal_kl, discretized_gaussian_log_likelihood
-from scipy import ndimage
-from torchvision import transforms
+# from scipy import ndimage
+# from torchvision import transforms
 from .utils import staple, dice_score, norm
-import torchvision.utils as vutils
+# import torchvision.utils as vutils
 from .dpm_solver import NoiseScheduleVP, model_wrapper, DPM_Solver
 import string
 import random

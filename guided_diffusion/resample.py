@@ -1,16 +1,18 @@
 from abc import ABC, abstractmethod
-
 import numpy as np
 import torch as th
 import torch.distributed as dist
 
-
 def create_named_schedule_sampler(name, diffusion, maxt):
     """
+    name: the name of the shedule sampler.
+    diffusion: the diffusion object to sample for.
+    maxt: the maximum value of timesteps.
+
+    return: a ScheduleSampler object.
+
     Create a ScheduleSampler from a library of pre-defined samplers.
 
-    :param name: the name of the sampler.
-    :param diffusion: the diffusion object to sample for.
     """
     if name == "uniform":
         return UniformSampler(diffusion, maxt)
@@ -18,7 +20,6 @@ def create_named_schedule_sampler(name, diffusion, maxt):
         return LossSecondMomentResampler(diffusion)
     else:
         raise NotImplementedError(f"unknown schedule sampler: {name}")
-
 
 class ScheduleSampler(ABC):
     """
@@ -41,24 +42,26 @@ class ScheduleSampler(ABC):
 
     def sample(self, batch_size, device):
         """
-        Importance-sample timesteps for a batch.
+        batch_size: the number of timesteps.
+        device: the torch device to save to.
 
-        :param batch_size: the number of timesteps.
-        :param device: the torch device to save to.
-        :return: a tuple (timesteps, weights):
+        return: a tuple (timesteps, weights):
                  - timesteps: a tensor of timestep indices.
                  - weights: a tensor of weights to scale the resulting losses.
+
+        Importance-sample timesteps for a batch.
         """
         w = self.weights()
         p = w / np.sum(w)
-        indices_np = np.random.choice(len(p), size=(batch_size,), p=p)
+        # array of length batch_size selected from 0 - len(p) with probability p
+        indices_np = np.random.choice(len(p), size=(batch_size,), p=p) 
         indices = th.from_numpy(indices_np).long().to(device)
-        weights_np = 1 / (len(p) * p[indices_np])
+        weights_np = 1 / (len(p) * p[indices_np]) # doubt in reweighting
         weights = th.from_numpy(weights_np).float().to(device)
         return indices, weights
 
-
 class UniformSampler(ScheduleSampler):
+
     def __init__(self, diffusion, maxt):
         self.diffusion = diffusion
         self._weights = np.ones([maxt])
@@ -66,7 +69,7 @@ class UniformSampler(ScheduleSampler):
     def weights(self):
         return self._weights
 
-
+# --- not explored ---
 class LossAwareSampler(ScheduleSampler):
     def update_with_local_losses(self, local_ts, local_losses):
         """
@@ -119,7 +122,6 @@ class LossAwareSampler(ScheduleSampler):
         :param ts: a list of int timesteps.
         :param losses: a list of float losses, one per timestep.
         """
-
 
 class LossSecondMomentResampler(LossAwareSampler):
     def __init__(self, diffusion, history_per_term=10, uniform_prob=0.001):

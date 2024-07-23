@@ -1,6 +1,5 @@
 import numpy as np
 import torch as th
-
 from .gaussian_diffusion import GaussianDiffusion
 
 
@@ -25,6 +24,8 @@ def space_timesteps(num_timesteps, section_counts):
                            is a number of steps to use the striding from the
                            DDIM paper.
     :return: a set of diffusion steps from the original process to use.
+
+    section_counts = [10,15,20] divide into 3 sections and take 10,15,20 steps from each section
     """
     if isinstance(section_counts, str):
         if section_counts.startswith("ddim"):
@@ -36,6 +37,7 @@ def space_timesteps(num_timesteps, section_counts):
                 f"cannot create exactly {num_timesteps} steps with an integer stride"
             )
         section_counts = [int(x) for x in section_counts.split(",")]
+        
     size_per = num_timesteps // len(section_counts)
     extra = num_timesteps % len(section_counts)
     start_idx = 0
@@ -59,21 +61,23 @@ def space_timesteps(num_timesteps, section_counts):
         start_idx += size
     return set(all_steps)
 
-
 class SpacedDiffusion(GaussianDiffusion):
     """
-    A diffusion process which can skip steps in a base diffusion process.
+    :use_timesteps: a collection (sequence or set) of timesteps from the
+                    original diffusion process to retain.
+    :kwargs: the kwargs to create the base diffusion process.
 
-    :param use_timesteps: a collection (sequence or set) of timesteps from the
-                          original diffusion process to retain.
-    :param kwargs: the kwargs to create the base diffusion process.
+    A diffusion process which can skip steps in a base diffusion process.
+    making new betas for the selected timesteps using alpha_cumprod.
+
     """
 
     def __init__(self, use_timesteps, **kwargs):
+
         self.use_timesteps = set(use_timesteps)
         self.timestep_map = []
         self.original_num_steps = len(kwargs["betas"])
-        base_diffusion = GaussianDiffusion(**kwargs)  # pylint: disable=missing-kwoa
+        base_diffusion = GaussianDiffusion(**kwargs)
         last_alpha_cumprod = 1.0
         new_betas = []
         for i, alpha_cumprod in enumerate(base_diffusion.alphas_cumprod):
@@ -117,7 +121,6 @@ class SpacedDiffusion(GaussianDiffusion):
         # Scaling is done by the wrapped model.
         return t
 
-
 class _WrappedModel:
     def __init__(self, model, timestep_map, rescale_timesteps, original_num_steps):
         self.model = model
@@ -133,8 +136,6 @@ class _WrappedModel:
         if self.rescale_timesteps:
             new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
         return self.model(x, new_ts, **kwargs)
-
-
 
 class _WrappedModel2:
     def __init__(self, model, timestep_map, rescale_timesteps, original_num_steps):

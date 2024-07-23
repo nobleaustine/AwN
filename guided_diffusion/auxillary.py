@@ -5,6 +5,9 @@ import torch as th
 import torch.distributed as dist
 import blobfile as bf
 import io
+import yaml
+from dacite import from_dict
+from .script_util import TrainConfig,DiffusionConfig,ModelConfig
 
 def setup_dist_system(batch_size, global_seed):
 
@@ -27,7 +30,7 @@ def create_logger(logging_dir):
     """
     Create a logger that writes to a log file and stdout.
     """
-    # only one process is used to save details
+    
     if dist.get_rank() == 0:  
         logging.basicConfig(
             level=logging.INFO,
@@ -36,21 +39,35 @@ def create_logger(logging_dir):
             handlers=[logging.StreamHandler(), logging.FileHandler(f"{logging_dir}/log.txt")]
         )
         logger = logging.getLogger(__name__)
-    else:  # dummy logger (does nothing)
+    else:  
         logger = logging.getLogger(__name__)
         logger.addHandler(logging.NullHandler())
     return logger
 
+def load_config(yaml_file: str='./config/basic_arguments.yaml') -> Config:
+       
+    with open(yaml_file_path, 'r') as file:
+        data = yaml.safe_load(file)
 
-def load_state_dict(path, **kwargs):
-    """
-    Load a PyTorch file without redundant fetches across MPI ranks.
-    """
-    mpigetrank=0
-    if mpigetrank==0:
-        with bf.BlobFile(path, "rb") as f:
-            data = f.read()
-    else:
-        data = None
-    
-    return th.load(io.BytesIO(data), **kwargs)
+    train_config = TrainConfig(**data['train'])
+    diffusion_config = DiffusionConfig(**data['diffusion'])
+    model_config = ModelConfig(**data['model'])
+
+    return train_config,diffusion_config,model_config
+
+# --- old code ---
+
+def create_argparser():
+    # todo: make it pass as an cl argument
+    yaml_file_path = './config/basic_arguments.yaml'
+
+    with open(yaml_file_path, 'r') as file:
+        data = yaml.safe_load(file)
+
+    defaults = data['train']  
+    defaults.update(data['model'])
+    defaults.update(data['diffusion'])
+
+    parser = argparse.ArgumentParser()
+    add_dict_to_argparser(parser, defaults)
+    return parser

@@ -1,13 +1,123 @@
 import argparse
 import inspect
+from dataclasses import dataclass
 
 from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
-from .unet import SuperResModel, UNetModel_newpreview, UNetModel_v1preview, EncoderUNetModel
 from models.AWN import DiT_models
 
-NUM_CLASSES = 3
+@dataclass
+class TrainConfig:
+    data_name: str= 'CT',
+    mod: str= "DiT-XL/2",
+    image_dir: str= "/cluster/home/austinen/NTNU/DATA/EDA/IMAGE_SLICES/",
+    label_dir: str= "/cluster/home/austinen/NTNU/DATA/EDA/LABEL_SLICES/",
+    results_dir: str= "./cluster/home/austinen/NTNU/MSD_output/",
+    schedule_sampler: str= "uniform",
+    lr: float= 1e-4,
+    weight_decay: float= 0.0,
+    lr_anneal_steps: int=  0,
+    batch_size: int= 4,
+    microbatch: int= -1,         
+    ema_rate: str= "0.9999",      # comma-separated list of EMA values
+    log_interval: int= 100,
+    save_interval: int= 5000,
+    resume_checkpoint: str= None, # "/results/pretrainedmodel.pt"
+    use_fp16: bool= False,
+    fp16_scale_growth: float= 1e-3,
+    gpu_dev: str= "0",
+    global_seed: int= 0,
+    num_workers: int= 4,
 
+@dataclass
+class ModelConfig:
+    input_size: int = 512
+
+@dataclass
+class DiffusionConfig:
+
+    """
+    diffusion_steps[scalar](int): No. of steps in diffusion.
+    learn_sigma[scalar](bool): Standard deviation(s) learning flag.
+    sigma_small[scalar](bool): Smaller sigma flag.
+    noise_schedule[scalar](str): Noise addition schedule.
+    use_kl[scalar](bool): KL divergence usage.
+    predict_xstart[scalar](bool): Start prediction flag.
+    dpm_solver[scalar](bool): DPM solver usage.
+    rescale_timesteps[scalar](bool): Timestep rescaling.
+    rescale_learned_sigmas[scalar](bool): Sigma rescaling.
+    timestep_respacing[scalar](str): Timestep respacing method.
+
+    Diffusion models reverse noise,
+    to learn data distributions.
+    Involves forward, reverse processes.
+    Uses KL divergence for optimization.
+    Adjusts diffusion specifics.
+    """
+
+    diffusion_steps: int= 1000,  
+    learn_sigma: bool= False,
+    sigma_small: bool= False,
+    noise_schedule: str= "linear",
+    use_kl: bool= False,
+    predict_xstart: bool= False,
+    dpm_solver = False,
+    rescale_timesteps: bool=  False,
+    rescale_learned_sigmas: bool= False,
+    timestep_respacing: str= "",
+
+# @dataclass
+# class Config:
+#     train: TrainingConfig
+#     model: ModelConfig
+#     diffusion: DiffusionConfig
+    
+def setup_model_diffusion(diffusion_config: DiffusionConfig,model_config:ModelConfig):
+
+    d = diffusion_config
+    m = model_config
+
+    betas = gd.get_named_beta_schedule(d.noise_schedule, d.diffusion_steps)
+
+    if d.use_kl:
+        loss_type = gd.LossType.RESCALED_KL
+    elif d.rescale_learned_sigmas:
+        loss_type = gd.LossType.RESCALED_MSE
+    else:
+        loss_type = gd.LossType.MSE
+
+    if not timestep_respacing:
+        timestep_respacing = [d.diffusion_steps] # default to all timesteps
+
+    diffusion = SpacedDiffusion(
+        use_timesteps=space_timesteps(d.diffusion_steps, timestep_respacing),
+        betas=betas,
+        model_mean_type=(gd.ModelMeanType.EPSILON if not d.predict_xstart else gd.ModelMeanType.START_X),
+        model_var_type=(
+            (
+                gd.ModelVarType.FIXED_LARGE
+                if not d.sigma_small
+                else gd.ModelVarType.FIXED_SMALL
+            )
+            if not d.learn_sigma
+            else gd.ModelVarType.LEARNED_RANGE
+        ),
+        loss_type=loss_type,
+        dpm_solver=d.dpm_solver,
+        rescale_timesteps=d.rescale_timesteps,
+    ) 
+    model = DiT_models[m.mod](
+        input_size=m.image_size,
+    )
+    
+    
+    return model, diffusion
+    # return diffusion
+
+
+# --- OLD CODE ---
+from .unet import SuperResModel, UNetModel_newpreview, UNetModel_v1preview, EncoderUNetModel
+NUM_CLASSES = 3
 
 def diffusion_defaults():
     """
@@ -24,7 +134,6 @@ def diffusion_defaults():
         rescale_learned_sigmas=False,
     )
 
-
 def classifier_defaults():
     """
     Defaults for classifier models.
@@ -39,7 +148,6 @@ def classifier_defaults():
         classifier_resblock_updown=True,  # False
         classifier_pool="spatial",
     )
-
 
 def model_and_diffusion_defaults():
     """
@@ -69,12 +177,10 @@ def model_and_diffusion_defaults():
     res.update(diffusion_defaults())
     return res
 
-
 def classifier_and_diffusion_defaults():
     res = classifier_defaults()
     res.update(diffusion_defaults())
     return res
-
 
 def create_model_and_diffusion(
     image_size,
@@ -138,7 +244,6 @@ def create_model_and_diffusion(
         timestep_respacing=timestep_respacing,
     )
     return model, diffusion
-
 
 def create_model(
     image_size,
@@ -224,7 +329,6 @@ def create_model(
         input_size=image_size,
     )
 
-
 def create_classifier_and_diffusion(
     image_size,
     classifier_use_fp16,
@@ -265,7 +369,6 @@ def create_classifier_and_diffusion(
     )
     return classifier, diffusion
 
-
 def create_classifier(
     image_size,
     classifier_use_fp16,
@@ -304,7 +407,6 @@ def create_classifier(
         pool=classifier_pool,
     )
 
-
 def sr_model_and_diffusion_defaults():
     res = model_and_diffusion_defaults()
     res["large_size"] = 256
@@ -314,7 +416,6 @@ def sr_model_and_diffusion_defaults():
         if k not in arg_names:
             del res[k]
     return res
-
 
 def sr_create_model_and_diffusion(
     large_size,
@@ -370,7 +471,6 @@ def sr_create_model_and_diffusion(
     )
     return model, diffusion
 
-
 def sr_create_model(
     large_size,
     small_size,
@@ -422,7 +522,6 @@ def sr_create_model(
         use_fp16=use_fp16,
     )
 
-
 def create_gaussian_diffusion(
     *,
     steps=1000,
@@ -465,7 +564,6 @@ def create_gaussian_diffusion(
         rescale_timesteps=rescale_timesteps,
     )
 
-
 def add_dict_to_argparser(parser, default_dict):
     for k, v in default_dict.items():
         v_type = type(v)
@@ -475,10 +573,8 @@ def add_dict_to_argparser(parser, default_dict):
             v_type = str2bool
         parser.add_argument(f"--{k}", default=v, type=v_type)
 
-
 def args_to_dict(args, keys):
     return {k: getattr(args, k) for k in keys}
-
 
 def str2bool(v):
     """

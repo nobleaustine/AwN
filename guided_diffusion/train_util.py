@@ -62,7 +62,7 @@ class TrainLoop:
         self.resume_checkpoint = resume_checkpoint
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
-        self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
+        self.schedule_sampler = schedule_sampler
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
 

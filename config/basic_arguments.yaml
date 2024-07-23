@@ -1,14 +1,12 @@
 train:
   data_name: 'CT'
-  mod: "DiT-XL/2"
+  model: "DiT-XL/2"
   image_dir: "/cluster/home/austinen/NTNU/DATA/EDA/IMAGE_SLICES/"
   label_dir: "/cluster/home/austinen/NTNU/DATA/EDA/LABEL_SLICES/"
   results_dir: "./cluster/home/austinen/NTNU/MSD_output/"
-  schedule_sampler: "uniform"
   lr: 1e-4
   weight_decay: 0.0
   lr_anneal_steps: 0
-  batch_size: 4
   microbatch: -1         # -1 disables microbatches
   ema_rate: "0.9999"     # comma-separated list of EMA values
   log_interval: 100
@@ -17,7 +15,8 @@ train:
   use_fp16: False
   fp16_scale_growth: 1e-3
   gpu_dev: "0"
-  multi_gpu: None         # "0,1,2"
+  multi_gpu: None # "0,1,2"
+  batch_size: 4         
   global_seed: 0
   num_workers: 4
 model:
@@ -41,6 +40,7 @@ model:
   version: 'new'
   mod: "DiT-S/2" #'unet/1'
 diffusion:
+  schedule_sampler: "uniform"
   learn_sigma: True
   diffusion_steps: 1000
   noise_schedule: "linear"

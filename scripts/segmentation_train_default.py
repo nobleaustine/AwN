@@ -2,14 +2,11 @@ import yaml
 import os
 from glob import glob
 import sys
-import argparse
-from omegaconf import DictConfig,OmegaConf
-import hydra
+
 sys.path.append("../")
 sys.path.append("./")
-# from guided_diffusion import dist_util, logger
 from guided_diffusion.resample import create_named_schedule_sampler
-from guided_diffusion.auxillary import create_logger,setup_dist_system
+from guided_diffusion.auxillary import create_logger,setup_dist_system,load_config
 
 from guided_diffusion.CT_Dataset import NTNUDataset
 from guided_diffusion.script_util import (
@@ -20,8 +17,6 @@ from guided_diffusion.script_util import (
 )
 import torch as th
 from guided_diffusion.train_util import TrainLoop
-# from visdom import Visdom
-# viz = Visdom(port=8850)
 import torchvision.transforms as transforms
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -30,17 +25,20 @@ from torch.utils.data.distributed import DistributedSampler
 from helper_functions.ct_dataloader import CTDataset
 from torchvision import transforms
 
+# from guided_diffusion import dist_util, logger
+# from visdom import Visdom
+# viz = Visdom(port=8850)
 
 def main():
-
-    args = create_argparser()
-    rank,device = setup_dist_system(args.batch_size, args.global_seed)
+    
+    Targs,Dargs,Margs = load_config()
+    rank,device = setup_dist_system(Targs.batch_size, Targs.global_seed)
 
     if dist.get_rank() == 0:
-        os.makedirs(args.results_dir, exist_ok=True) 
-        experiment_index = len(glob(f"{args.results_dir}/*"))
-        model_string_name = args.mod.replace("/", "-") 
-        experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}" 
+        os.makedirs(Targs.results_dir, exist_ok=True) 
+        experiment_index = len(glob(f"{Targs.results_dir}/*"))
+        model_string_name = Targs.model.replace("/", "-") 
+        experiment_dir = f"{Targs.results_dir}/{experiment_index:03d}-{model_string_name}" 
         checkpoint_dir = f"{experiment_dir}/checkpoints"  
         os.makedirs(checkpoint_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
@@ -50,7 +48,7 @@ def main():
 
     logger.info("setting up dataloader and dataset...")
     transform = transforms.Compose([transforms.Lambda(lambda x: x.to(th.float32))])
-    dataset = NTNUDataset(args.image_dir, args.label_dir, transform)
+    dataset = NTNUDataset(Targs.image_dir, Targs.label_dir, transform)
     process_count = dist.get_world_size()
 
     sampler = DistributedSampler(
@@ -58,25 +56,24 @@ def main():
         num_replicas=process_count,
         rank=rank,
         shuffle=True,
-        seed=args.global_seed
+        seed=Targs.global_seed
     )
     loader = DataLoader(
         dataset,
-        batch_size=int(args.batch_size //process_count),
+        batch_size=int(Targs.batch_size //process_count),
         shuffle=False,
         sampler=sampler,
-        num_workers=args.num_workers,
+        num_workers=Targs.num_workers,
         pin_memory=True,
         drop_last=True
     )
-    logger.info(f"Dataset contains {len(dataset):,} images ({args.image_dir})")
+    logger.info(f"Dataset contains {len(dataset):,} images ({Targs.image_dir})")
     data = iter(loader)
 
     logger.info("creating model and diffusion...")
-    model, diffusion = create_model_and_diffusion(
-        **args_to_dict(args, model_and_diffusion_defaults().keys())
-    )
-    schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion,  maxt=args.diffusion_steps)
+
+    model,diffusion = setup_model_diffusion(Dargs,Margs)
+    schedule_sampler = create_named_schedule_sampler(Dargs.schedule_sampler, diffusion,  maxt=Dargs.diffusion_steps)
 
 
     logger.info("begin training...")
@@ -87,36 +84,19 @@ def main():
         diffusion=diffusion,
         data=data,
         dataloader=loader,
-        batch_size=int(args.batch_size //process_count),
-        microbatch=args.microbatch,
-        lr=args.lr,
-        ema_rate=args.ema_rate,
-        log_interval=args.log_interval,
-        save_interval=args.save_interval,
-        resume_checkpoint=args.resume_checkpoint,
-        use_fp16=args.use_fp16,
-        fp16_scale_growth=args.fp16_scale_growth,
+        batch_size=int(Targs.batch_size //process_count),
+        microbatch=Targs.microbatch,
+        lr=Targs.lr,
+        ema_rate=Targs.ema_rate,
+        log_interval=Targs.log_interval,
+        save_interval=Targs.save_interval,
+        resume_checkpoint=Targs.resume_checkpoint,
+        use_fp16=Targs.use_fp16,
+        fp16_scale_growth=Targs.fp16_scale_growth,
         schedule_sampler=schedule_sampler,
-        weight_decay=args.weight_decay,
-        lr_anneal_steps=args.lr_anneal_steps,
+        weight_decay=Targs.weight_decay,
+        lr_anneal_steps=Targs.lr_anneal_steps,
     ).run_loop()
-
-
-def create_argparser():
-    # todo: make it pass as an cl argument
-    yaml_file_path = './config/basic_arguments.yaml'
-
-    with open(yaml_file_path, 'r') as file:
-        data = yaml.safe_load(file)
-
-    defaults = data['train']  
-    defaults.update(data['model'])
-    defaults.update(data['diffusion'])
-
-    parser = argparse.ArgumentParser()
-    add_dict_to_argparser(parser, defaults)
-    return parser
-
 
 if __name__ == "__main__":
     main()
