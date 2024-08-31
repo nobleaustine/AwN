@@ -46,7 +46,7 @@ class TrainLoop:
         self.rank = rank
         self.device = device
         self.model = model
-        self.dataloader=dataloader
+        self.dataloader= dataloader
         self.diffusion = diffusion
         self.data = data
         self.batch_size = batch_size
@@ -60,8 +60,10 @@ class TrainLoop:
         self.log_interval = log_interval
         self.save_interval = save_interval
         self.resume_checkpoint = resume_checkpoint
+
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
+        
         self.schedule_sampler = schedule_sampler
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
