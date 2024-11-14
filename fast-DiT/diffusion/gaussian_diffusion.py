@@ -973,7 +973,7 @@ class GaussianDiffusion:
         #         terms["loss"] = terms["mse"]
         # else:
         #     raise NotImplementedError(self.loss_type)
-        terms["loss"] = math.log(model.alpha,t)*loss_term["output"]+ math.log(model.beta,t)*loss_term["mse"]
+        terms["loss"] =loss_term["output"]+ loss_term["mse"]
         return terms
 
     def _prior_bpd(self, x_start):

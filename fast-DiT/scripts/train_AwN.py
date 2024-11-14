@@ -1,26 +1,21 @@
-"""
-A minimal training script for DiT.
-"""
+
 import torch
 import sys
-from tqdm import tqdm
 import argparse
 import yaml
 
-# the first flag below was False when we tested this script but True makes A100 training a lot faster:
-sys.path.append('/cluster/home/austinen/NTNU/AwN/SSD/others/fast-DiT/')
+sys.path.append('/cluster/home/austinen/NTNU/AwN/fast-DiT/')
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from helper_functions.ct_dataloader import NTNUDataset
+from helper_functions.CT_dataset import NTNUDataset
 from torchvision import transforms
 
 import numpy as np
 from collections import OrderedDict
-from PIL import Image
 from copy import deepcopy
 from glob import glob
 from time import time
@@ -28,11 +23,8 @@ import argparse
 import logging
 import os
 from accelerate import Accelerator
-
-from models.AWN_fast import awn_models
+from models.AwN_fast import awn_models
 from diffusion import create_diffusion
-
-
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -70,9 +62,33 @@ def create_logger(logging_dir):
     logger = logging.getLogger(__name__)
     return logger
 
-def load_args_from_yaml(yaml_file):
+def update_args(parser,yaml_file):
+    """
+    Update the parser with arguments from a yaml file.
+    """
     with open(yaml_file, 'r') as file:
-        return yaml.safe_load(file)
+
+        yaml_args = yaml.safe_load(file)
+
+        arguments = {}
+        arguments.update(yaml_args["train"])
+        arguments.update(yaml_args["model"])
+        arguments.update(yaml_args["diffusion"])
+
+        for key, value in arguments.items():
+            if isinstance(value, bool):
+                parser.add_argument(f"--{key}", type=bool, default=value)
+            elif isinstance(value, int):
+                parser.add_argument(f"--{key}", type=int, default=value)
+            elif isinstance(value, float):
+                parser.add_argument(f"--{key}", type=float, default=value)
+            elif isinstance(value, str):
+                parser.add_argument(f"--{key}", type=str, default=value)
+            elif isinstance(value, list):
+                parser.add_argument(f"--{key}", type=list, default=value)
+            else:
+                raise ValueError(f"Unsupported type for argument {key}: {type(value)}")
+    
 
 #################################################################################
 #                                  Training Loop                                #
@@ -99,10 +115,7 @@ def main(args):
         logger.info(f"Experiment directory created at {experiment_dir}")
 
     # Set up DiT model, EMA, optimizer, and diffusion:
-    model = awn_models[args.model](
-        input_size=args.image_size
-    )
-
+    model = awn_models[args.model](input_size=args.image_size)
     model = model.to(device)
     ema = deepcopy(model).to(device)  
     requires_grad(ema, False)
@@ -111,6 +124,7 @@ def main(args):
     if accelerator.is_main_process:
         logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
+    # updated learning rate and weight decay
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
 
     transform = transforms.Compose([transforms.Lambda(lambda x: x.to(torch.float32))])
@@ -122,12 +136,10 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=True
-
     )
     
     if accelerator.is_main_process:
         logger.info(f"Dataset contains {len(dataset):,} images")
-
 
     update_ema(ema, model, decay=0) 
     model.train()  
@@ -139,48 +151,72 @@ def main(args):
     running_loss = 0
    
     start_time = time()
+    data_time1 = 0
+    d = 0
+    f = 0
+    b = 0
+
     if accelerator.is_main_process:
         logger.info(f"Training for {args.epochs} epochs...")
+    
+
     for epoch in range(args.epochs):
         if accelerator.is_main_process:
             logger.info(f"Beginning epoch {epoch}...")
         # y: image, x: label
-        for y,x,z in loader:
+        data_time1 = time()
+        for y, x, z in loader:
             x = x.to(device)
-            y = y.to(device)       
-            # x = x.squeeze(dim=1)
-            # y = y.squeeze(dim=1)
+            y = y.to(device)  
+            data_time2 = time()
+            d = d + data_time2 - data_time1
+            
             t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
             model_kwargs = dict(y=y)
-
-            loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
-            loss = loss_dict["loss"].mean()
+            
+            forward_time1 = time()
+            with torch.autocast("cuda"):
+                loss_dict = diffusion.training_losses_segmentation(model, x, t, model_kwargs)
+                loss = loss_dict["loss"].mean()
+            forward_time2 = time()
+            f = f + forward_time2 - forward_time1
+            
             
             opt.zero_grad()
+            backward_time1 = time()
+            # applying gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             accelerator.backward(loss)
             opt.step()
             update_ema(ema, model)
-    
+            backward_time2 = time()
+            b = b + backward_time2 - backward_time1
+        
             # Log loss values:
             running_loss += loss.item()
             log_steps += 1
             train_steps += 1
-            if train_steps % args.log_every == 0:
 
-                # Measure training speed:
+            if train_steps % args.log_every == 0:
                 torch.cuda.synchronize()
                 end_time = time()
                 steps_per_sec = log_steps / (end_time - start_time)
                 
-                # Reduce loss history over all processes:
                 avg_loss = torch.tensor(running_loss / log_steps, device=device)
                 avg_loss = avg_loss.item() / accelerator.num_processes
+                avg_data_time = d / log_steps
+                avg_forward_time = f / log_steps
+                avg_backward_time = b / log_steps
+
                 if accelerator.is_main_process:
                     logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
-                # Reset monitoring variables:
+                    logger.info(f"Data Time: {avg_data_time:.4f}, Forward Time: {avg_forward_time:.4f}, Backward Time: {avg_backward_time:.4f}")
                 running_loss = 0
                 log_steps = 0
                 start_time = time()
+                d = 0
+                f = 0
+                b = 0
 
             # Save DiT checkpoint:
             if train_steps % args.ckpt_every == 0 and train_steps > 0:
@@ -195,37 +231,21 @@ def main(args):
                     torch.save(checkpoint, checkpoint_path)
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
 
-    model.eval()  # important! This disables randomized embedding dropout
-    # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
+            data_time1 = time()
+
+    model.eval()
     
     if accelerator.is_main_process:
         logger.info("Done!")
 
-
 if __name__ == "__main__":
 
+    # parse arguments from yaml file
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, help="path to the YAML config file",default="/cluster/home/austinen/NTNU/AwN/SSD/others/fast-DiT/config/arguments.yaml")
-
+    parser.add_argument("--config", type=str, default="/cluster/home/austinen/NTNU/AwN/fast-DiT/config/arguments.yaml")
     config_args, remaining_args = parser.parse_known_args()
 
     if config_args.config:
-        yaml_args = load_args_from_yaml(config_args.config)
-        parser.set_defaults(**yaml_args)
-
-    # # Add the rest of the arguments
-    # parser.add_argument("--data-path", type=str, default="/cluster/home/austinen/NTNU/DATA/training")
-    # parser.add_argument("--results-dir", type=str, default="results")
-    # parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
-    # parser.add_argument("--image-size", type=int, choices=[64, 256, 512], default=64)
-    # parser.add_argument("--epochs", type=int, default=1400)
-    # parser.add_argument("--global-batch-size", type=int, default=100)
-    # parser.add_argument("--global-seed", type=int, default=0)
-    # # parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
-    # parser.add_argument("--num-workers", type=int, default=8)
-    # parser.add_argument("--log-every", type=int, default=100)
-    # parser.add_argument("--ckpt-every", type=int, default=50_000)
-
-    # Parse all arguments
-    args = parser.parse_args(remaining_args)
+        update_args(parser,config_args.config)
+    args = parser.parse_args()
     main(args)

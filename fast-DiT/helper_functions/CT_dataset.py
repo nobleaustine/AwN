@@ -5,6 +5,7 @@ import nibabel as nib
 import torch
 from torch.utils.data import Dataset
 
+
 class NTNUDataset(Dataset):
     
     def __init__(self, image_dir, label_dir, transform=None,mode= 'Training'):
@@ -37,9 +38,13 @@ class NTNUDataset(Dataset):
             image_slice = image.unsqueeze(0).float()
 
             # one-hot encoding
-            label_slice = torch.zeros((3, label.shape[0], label.shape[1]))  
-            for i in range(3): 
-                label_slice[i] = (label == i).float()
+            # label_slice = torch.zeros((3, label.shape[0], label.shape[1]))  
+            # for i in range(3): 
+            #     label_slice[i] = (label == i).float()
+            
+            label_slice = torch.zeros((2, label.shape[0], label.shape[1]))  
+            for i in range(1,3): 
+                label_slice[i-1] = (label == i).float()
             
             
             if self.transform:
@@ -54,3 +59,7 @@ class NTNUDataset(Dataset):
         except Exception as e:
             print(f"Error loading image at index {idx}: {e}")
             return None
+
+
+    
+

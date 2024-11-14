@@ -14,18 +14,19 @@ def create_diffusion(
     noise_schedule="linear",
     use_kl=False,
     sigma_small=False,
-    predict_xstart=False,
+    predict_xstart=True,
     learn_sigma=True,
     rescale_learned_sigmas=False,
     diffusion_steps=1000,
 ):
     betas = gd.get_named_beta_schedule(noise_schedule, diffusion_steps)
-    if use_kl:
-        loss_type = gd.LossType.RESCALED_KL
-    elif rescale_learned_sigmas:
-        loss_type = gd.LossType.RESCALED_MSE
-    else:
-        loss_type = gd.LossType.MSE
+    # if use_kl:
+    #     loss_type = gd.LossType.RESCALED_KL
+    # elif rescale_learned_sigmas:
+    #     loss_type = gd.LossType.RESCALED_MSE
+    # else:
+    #     loss_type = gd.LossType.MSE
+    loss_type = gd.LossType.KL
     if timestep_respacing is None or timestep_respacing == "":
         timestep_respacing = [diffusion_steps]
     return SpacedDiffusion(
